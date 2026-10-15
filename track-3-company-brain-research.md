@@ -405,6 +405,227 @@ A trustworthy Company Brain should be an evidence-linked organizational graph, n
   - The benchmark found lower accuracy for more dynamic, less popular, and more complex facts—conditions that closely resemble changing company knowledge.
   - These numbers are not a direct forecast for a FalkorDB Company Brain. They show why evaluation must include dynamic updates, authority, source quality, and abstention.
 
+- **Add an explicit authorization guardrail layer for role-based graph access.**
+  - Role-based access control must be enforced by trusted application code before a graph query is constructed, not by an LLM instruction and not only after results are returned.
+  - Recommended authorization entities:
+    - `Principal` — authenticated user, service account, or agent;
+    - `Role` — such as employee, manager, project-member, security-admin, or read-only-agent;
+    - `Permission` — such as `graph.read`, `graph.read_sensitive`, `graph.write`, `decision.read`, `ticket.create`, or `admin.audit`;
+    - `Scope` — organization, workspace, team, project, repository, channel, folder, document, ticket, or classification boundary;
+    - `Policy` — deny/allow rules, source-system constraints, expiry, and approval requirements.
+  - Suggested graph relationships:
+    - `(principal)-[:HAS_ROLE]->(role)`;
+    - `(role)-[:GRANTS]->(permission)`;
+    - `(permission)-[:APPLIES_TO]->(scope)`;
+    - `(sourceRecord)-[:VISIBLE_TO]->(scope)`;
+    - `(policy)-[:GOVERNS]->(permission)`.
+  - Resolve the effective authorization context from the authenticated session:
+    - principal ID;
+    - organization ID;
+    - active roles;
+    - permitted graph key(s);
+    - allowed labels and relationship types;
+    - allowed source systems;
+    - allowed sensitivity levels;
+    - read/write capability;
+    - policy version and expiry.
+  - The LLM may request an intent such as “find project ownership,” but it must not select its own tenant, role, graph key, permission scope, or unrestricted Cypher.
+
+- **Use deny-by-default query guardrails for FalkorDB.**
+  - Reject a request if the authenticated principal has no explicit read permission for the requested scope.
+  - Reject graph labels, relationship types, property names, and source systems outside the server-side allowlist.
+  - Reject write clauses such as `CREATE`, `SET`, `DELETE`, `DETACH DELETE`, and unsafe `MERGE` in read-only retrieval paths.
+  - Use `GRAPH.RO_QUERY` for read-only retrieval where appropriate; FalkorDB documents that it rejects writes. [FalkorDB GRAPH.RO_QUERY](https://docs.falkordb.com/commands/graph.ro_query/)
+  - Use parameterized Cypher and inject authorization predicates from trusted code. FalkorDB documents parameterized queries as a protection against Cypher injection and a way to reuse execution plans. [FalkorDB GRAPH.QUERY](https://docs.falkordb.com/commands/graph.query/)
+  - Require bounded traversal depth, result limits, query timeouts, and response-size limits.
+  - Require an audit record for every sensitive graph read, denied query, policy decision, and write action.
+  - If authorization metadata is unavailable or stale, fail closed for sensitive data rather than falling back to broad retrieval.
+
+- **Apply authorization before every retrieval stage, including vector and summary layers.**
+  - Permission filtering must happen before:
+    1. exact lookup;
+    2. full-text search;
+    3. vector search;
+    4. graph expansion;
+    5. community-summary retrieval;
+    6. reranking;
+    7. prompt assembly;
+    8. answer caching.
+  - A post-generation filter is insufficient because a private document may already have influenced the selected context or generated answer.
+  - Store permission scope and policy version on source records, chunks, facts, relationships, summaries, and embeddings.
+  - Partition cache keys by organization, principal, role set, permission version, and query scope.
+  - When a role is revoked, invalidate affected caches and mark derived summaries and embeddings for revalidation.
+
+- **Separate read, suggest, and execute capabilities.**
+  - `READ` permits retrieval of authorized graph evidence.
+  - `SUGGEST` permits the agent to propose an action, answer, assignment, or decision summary, but not modify source systems.
+  - `EXECUTE` permits a typed operation only after policy validation and, for high-impact actions, explicit human approval.
+  - Example guardrail policy:
+    - an ordinary employee can read project and public-document evidence;
+    - a project member can read project-private tickets;
+    - a manager can read team-level ownership and staffing evidence;
+    - a security-admin can access sensitive incident records;
+    - an agent can suggest ticket assignments but cannot change them without approval;
+    - a service account can write synchronization events but cannot read unrelated private chat content.
+  - Record the requested capability, policy decision, approver, tool call, external response, and resulting graph change as an auditable `Action` or `ChangeEvent` subgraph.
+
+- **Return pinpoint evidence with every substantive answer.**
+  - The answer contract should contain separate fields for:
+    - `answer` — concise natural-language response;
+    - `confidence` — calibrated or categorical confidence, not an unsupported numeric claim;
+    - `evidence` — exact supporting records;
+    - `uncertainties` — conflicts, stale data, or missing evidence;
+    - `freshness` — last source synchronization and source-record update time;
+    - `permissions` — the scope under which the evidence was visible;
+    - `retrieval_trace_id` — audit correlation ID.
+  - Each evidence item should include:
+    - `evidence_id`;
+    - `source_system`;
+    - `source_record_id`;
+    - `title`;
+    - `canonical_url`;
+    - `direct_url` or permalink to the exact source object;
+    - `locator` such as page, paragraph, heading, line range, issue comment ID, message timestamp, or document chunk ID;
+    - `excerpt` copied from the authorized source;
+    - `source_updated_at`;
+    - `ingested_at`;
+    - `content_hash`;
+    - `relevance_reason`;
+    - `access_scope`.
+  - The model should never invent a URL. Links must be generated from connector metadata or validated against the source system before being shown to the user.
+
+- **Use source-specific pinpoint-link strategies.**
+  - **Documents and knowledge pages:** store the canonical URL plus heading, section, paragraph index, page number where applicable, chunk ID, and content hash. If the source supports anchors, generate a heading or fragment URL.
+  - **Slack:** store workspace, channel ID, message timestamp, thread timestamp, and the official message permalink. Slack event records include event and message timestamps that can be used to resolve the exact message context. [Slack Events API](https://docs.slack.dev/apis/events-api)
+  - **Jira:** store cloud/site URL, project key, issue key, comment ID where applicable, and the issue or comment URL. Preserve the source permission context because Jira operations require permissions. [Jira Cloud REST API](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/)
+  - **GitHub:** store repository, commit SHA, pull-request or issue number, file path, and line range. Prefer immutable commit or blob URLs over a mutable default-branch URL.
+  - **SharePoint:** store site ID, drive/list ID, item ID, web URL, version or ETag, and page/heading/chunk locator. Microsoft Graph exposes resource IDs, creators, modifiers, and modified timestamps for SharePoint resources. [Microsoft Graph SharePoint resources](https://learn.microsoft.com/en-us/graph/api/resources/sharepoint?view=graph-rest-1.0)
+  - **Tickets and incidents:** store issue ID, comment or event ID, status at ingestion, source version, and the exact source link.
+
+- **Make evidence links verifiable and resilient.**
+  - Validate that the user is authorized to open the link before displaying it, or clearly label it as “available only with source-system access.”
+  - Keep both a stable source URL and a source snapshot reference. A source page can change after the answer is generated.
+  - Store the excerpt and content hash used at answer time so auditors can compare the current source with the original evidence.
+  - If a source is deleted, moved, or permission-revoked, mark the evidence item as unavailable and do not silently replace it with a different source.
+  - When a source system cannot provide a stable deep link, return the canonical record URL plus a precise locator and a short excerpt.
+
+- **Show a graph evidence path, not just a list of documents.**
+  - For “Who owns the service used by Project Atlas?”, show a path such as:
+    - `Project Atlas`
+    - `DEPENDS_ON`
+    - `Service X`
+    - `MAINTAINS`
+    - `Team Delta`
+    - `OWNS` or `LEADS`
+    - `Person Y`
+    - `SUPPORTED_BY`
+    - Jira issue / service catalog / decision document.
+  - For each edge, provide the supporting evidence link or indicate that the edge is an inferred relationship and list the claims used to derive it.
+  - This directly demonstrates that FalkorDB is performing graph work rather than serving as a visualization layer.
+
+- **Use an evidence-aware response format in the product.**
+  - Recommended display:
+
+    ```text
+    Answer: Team Delta owns Service X, with Maya Chen listed as the current service lead.
+
+    Evidence:
+    1. Service X → maintained by → Team Delta
+       Source: Service catalog, "Service X" section
+       Open source: https://example.com/service-x#ownership
+       Updated: 2026-10-16
+
+    2. Team Delta → service lead → Maya Chen
+       Source: Jira project configuration, project DELTA
+       Open source: https://example.atlassian.net/browse/DELTA
+       Updated: 2026-10-15
+
+    Graph path:
+    Project Atlas → DEPENDS_ON → Service X → MAINTAINS → Team Delta
+
+    Caveat: A Slack discussion from 2026-10-14 suggests a possible ownership transition;
+    it is marked as an unconfirmed claim and is not used as the current owner.
+    ```
+
+  - The exact URLs above are illustrative only. Production URLs must come from validated connector metadata.
+  - Do not present a source link unless the evidence item actually participated in retrieval or graph derivation.
+
+- **Test the guardrails and evidence behavior explicitly.**
+  - Authorization tests:
+    - user with no project membership cannot retrieve project-private documents;
+    - role revocation removes access from graph, vector, full-text, summary, and cache paths;
+    - a model-generated tenant ID cannot override the authenticated tenant;
+    - generated Cypher cannot access forbidden labels, relationships, or graph keys;
+    - write-capable tools require the required permission and approval.
+  - Evidence tests:
+    - every answer claim maps to at least one evidence item;
+    - every evidence URL resolves to the source record or is marked unavailable;
+    - source excerpts match the stored content hash at ingestion time;
+    - the graph path shown to the user matches the Cypher result used for generation;
+    - stale or conflicting evidence is disclosed;
+    - unsupported questions produce a fixed abstention response.
+  - Security tests:
+    - prompt injection in a chat message cannot trigger an unauthorized tool call;
+    - malicious text cannot alter the authorization policy;
+    - private content cannot influence an answer for an unauthorized principal;
+    - cache keys cannot cross organization or role boundaries.
+
+### Core Company Brain Queries Explicitly Considered
+
+The four representative questions below are included as first-class requirements and should appear in the demo and evaluation set. They test distinct graph capabilities rather than simple document lookup.
+
+#### 1. Which accounts are linked to this flagged transaction?
+
+- **Capability tested:** multi-hop entity resolution and relationship-aware investigation.
+- **Suggested graph path:**
+  - `FlaggedTransaction` → `INVOLVES` → `Account`
+  - `FlaggedTransaction` → `ASSOCIATED_WITH` → `Person`, `Organization`, `Device`, `IP`, `PaymentInstrument`, or `Merchant`
+  - `Account` → `CONTROLLED_BY` / `OWNED_BY` → `Person` or `Organization`
+  - `Account` → `SHARES_DEVICE_WITH` / `SHARES_IP_WITH` → another `Account`
+- **Required answer behavior:** return linked accounts, the relationship type, the supporting transaction or risk record, timestamps, and an explainability path. Do not infer guilt from graph proximity alone.
+- **Security requirement:** restrict this query to authorized investigators or roles; account and transaction nodes should carry source-system scope and classification.
+- **Evaluation cases:** direct links, two-hop links, shared devices, shared IPs, aliases, deleted accounts, conflicting identity matches, and unrelated accounts with similar names.
+
+#### 2. What did this customer ask for last month, and was it resolved?
+
+- **Capability tested:** temporal retrieval, customer/entity resolution, conversation-to-ticket linkage, and outcome tracking.
+- **Suggested graph path:**
+  - `Customer` → `PARTICIPATED_IN` → `Conversation` → `CONTAINS` → `Message`
+  - `Message` → `REQUESTS` → `Request`
+  - `Request` → `CREATED_TICKET` → `Ticket`
+  - `Ticket` → `HAS_STATUS_EVENT` → `StatusChange`
+  - `Ticket` → `RESOLVED_BY` → `Person` or `Team`
+- **Required answer behavior:** apply the user’s local definition of “last month,” identify the customer’s requests, connect them to tickets or case records, and distinguish resolved, partially resolved, pending, duplicate, and unresolved states.
+- **Freshness requirement:** use the latest status event and report the last synchronization time. A historical message saying “fixed” must not override a later reopened ticket.
+- **Evaluation cases:** requests with no ticket, one request creating multiple tickets, tickets closed without resolution, reopened cases, timezone boundaries, and missing or redacted conversations.
+
+#### 3. Who on the team has worked on this system before?
+
+- **Capability tested:** expertise discovery, team membership, temporal validity, and evidence-weighted ranking.
+- **Suggested graph path:**
+  - `Team` → `HAS_MEMBER` → `Person`
+  - `Person` → `CONTRIBUTED_TO` → `Repository`, `Service`, `Project`, `Incident`, `Ticket`, `PullRequest`, or `Document`
+  - `Service` → `IMPLEMENTED_BY` / `MAINTAINED_BY` → `Team`
+  - `Person` → `DISCUSSED` / `RESOLVED` / `REVIEWED` → relevant system or incident evidence
+- **Required answer behavior:** rank people using evidence such as recent commits, incident resolution, ticket work, reviews, and authoritative ownership; show dates and evidence counts; separate current team members from former contributors.
+- **Important limitation:** prior activity demonstrates evidence of work, not current availability, expertise level, or willingness to take the task.
+- **Evaluation cases:** recent versus historical contributors, people who changed teams, indirect repository ownership, similar system names, sparse evidence, and conflicting organizational records.
+
+#### 4. What breaks if this service goes down?
+
+- **Capability tested:** dependency traversal, impact analysis, ownership lookup, and operational reasoning.
+- **Suggested graph path:**
+  - `Service` → `DEPENDS_ON` → `Service`, `Database`, `Queue`, `API`, or `ExternalSystem`
+  - `Project` / `Product` / `Application` → `USES` → `Service`
+  - `Service` → `BACKED_BY` → `Repository`, `Deployment`, `Database`, or `Infrastructure`
+  - `Service` → `OWNED_BY` / `MAINTAINED_BY` → `Person` or `Team`
+  - `Service` → `DOCUMENTED_BY` → `Runbook`, `Incident`, `Decision`, or `Document`
+- **Required answer behavior:** return direct and bounded transitive dependencies, affected projects or products, likely user-facing capabilities, owners, known single points of failure, and source evidence. Mark inferred impact separately from explicitly documented impact.
+- **Traversal requirement:** bound depth and fanout; an unbounded dependency walk can be expensive and can produce a misleading blast radius.
+- **Evaluation cases:** direct dependency, two-hop dependency, optional dependency, degraded-but-not-downstream service, circular dependency, stale architecture document, and missing dependency edges.
+
+These queries make FalkorDB essential: each answer depends on connected traversal, relationship types, temporal claims, provenance, and authorization—not merely on embedding similarity over isolated documents.
+
 ## Contradictions & Debate
 
 - **[HIGH CONFIDENCE] A Company Brain needs a graph, but a graph alone is not enough.**
