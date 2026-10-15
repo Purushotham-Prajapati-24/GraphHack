@@ -1,0 +1,28 @@
+# Secrets
+.env
+.env.local
+.env.production
+*.pem
+*.key
+
+# Claude Code personal overrides
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+.next/
+
+# Data / models
+data/falkordb/
+*.rdb
+ml/checkpoints/
