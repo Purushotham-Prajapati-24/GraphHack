@@ -572,34 +572,9 @@ A trustworthy Company Brain should be an evidence-linked organizational graph, n
 
 ### Core Company Brain Queries Explicitly Considered
 
-The four representative questions below are included as first-class requirements and should appear in the demo and evaluation set. They test distinct graph capabilities rather than simple document lookup.
+The Two representative questions below are included as first-class requirements and should appear in the demo and evaluation set. They test distinct graph capabilities rather than simple document lookup.
 
-#### 1. Which accounts are linked to this flagged transaction?
-
-- **Capability tested:** multi-hop entity resolution and relationship-aware investigation.
-- **Suggested graph path:**
-  - `FlaggedTransaction` → `INVOLVES` → `Account`
-  - `FlaggedTransaction` → `ASSOCIATED_WITH` → `Person`, `Organization`, `Device`, `IP`, `PaymentInstrument`, or `Merchant`
-  - `Account` → `CONTROLLED_BY` / `OWNED_BY` → `Person` or `Organization`
-  - `Account` → `SHARES_DEVICE_WITH` / `SHARES_IP_WITH` → another `Account`
-- **Required answer behavior:** return linked accounts, the relationship type, the supporting transaction or risk record, timestamps, and an explainability path. Do not infer guilt from graph proximity alone.
-- **Security requirement:** restrict this query to authorized investigators or roles; account and transaction nodes should carry source-system scope and classification.
-- **Evaluation cases:** direct links, two-hop links, shared devices, shared IPs, aliases, deleted accounts, conflicting identity matches, and unrelated accounts with similar names.
-
-#### 2. What did this customer ask for last month, and was it resolved?
-
-- **Capability tested:** temporal retrieval, customer/entity resolution, conversation-to-ticket linkage, and outcome tracking.
-- **Suggested graph path:**
-  - `Customer` → `PARTICIPATED_IN` → `Conversation` → `CONTAINS` → `Message`
-  - `Message` → `REQUESTS` → `Request`
-  - `Request` → `CREATED_TICKET` → `Ticket`
-  - `Ticket` → `HAS_STATUS_EVENT` → `StatusChange`
-  - `Ticket` → `RESOLVED_BY` → `Person` or `Team`
-- **Required answer behavior:** apply the user’s local definition of “last month,” identify the customer’s requests, connect them to tickets or case records, and distinguish resolved, partially resolved, pending, duplicate, and unresolved states.
-- **Freshness requirement:** use the latest status event and report the last synchronization time. A historical message saying “fixed” must not override a later reopened ticket.
-- **Evaluation cases:** requests with no ticket, one request creating multiple tickets, tickets closed without resolution, reopened cases, timezone boundaries, and missing or redacted conversations.
-
-#### 3. Who on the team has worked on this system before?
+#### 1. Who on the team has worked on this system before?
 
 - **Capability tested:** expertise discovery, team membership, temporal validity, and evidence-weighted ranking.
 - **Suggested graph path:**
@@ -611,7 +586,7 @@ The four representative questions below are included as first-class requirements
 - **Important limitation:** prior activity demonstrates evidence of work, not current availability, expertise level, or willingness to take the task.
 - **Evaluation cases:** recent versus historical contributors, people who changed teams, indirect repository ownership, similar system names, sparse evidence, and conflicting organizational records.
 
-#### 4. What breaks if this service goes down?
+#### 2. What breaks if this service goes down?
 
 - **Capability tested:** dependency traversal, impact analysis, ownership lookup, and operational reasoning.
 - **Suggested graph path:**
