@@ -1,0 +1,42 @@
+# Integration spike: FalkorDB + FalkorDB MCP server + Open WebUI (pinned).
+# Throwaway: proves the wiring before we scaffold the real repo.
+services:
+  falkordb:
+    image: falkordb/falkordb@sha256:b0bdcac2cbaff989e77cb0610439b7a9289e86de033ccbbd4368b66fb680ae7a  # graph module ver 42201, verified 16 Oct
+    ports:
+      - "6379:6379"   # Redis protocol
+      - "3010:3000"   # FalkorDB Browser (host 3000 is used by another local project)
+    volumes:
+      - falkordb-data:/var/lib/falkordb/data
+
+  falkordb-mcp:
+    image: falkordb/mcpserver@sha256:a12b46009173c967d8ba04b5ae82bab1b4bb4a83a06ec45be6273fcf8984cdca  # verified 16 Oct
+    environment:
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+      MCP_TRANSPORT: http
+      MCP_PORT: "8080"
+    ports:
+      - "8081:8080"
+    depends_on:
+      - falkordb
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.12.2
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ENABLE_MEMORIES: "False"        # FalkorDB owns memory, not Open WebUI
+      ENABLE_OPENAI_API: "False"
+      OFFLINE_MODE: "True"            # skip Open WebUI's own RAG model download; FalkorDB does retrieval
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3001:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      - falkordb-mcp
+
+volumes:
+  falkordb-data:
+  open-webui-data:
